@@ -7,18 +7,10 @@ from locates_task import csv_parser, distribute_locates
 
 @pytest.fixture
 def input_csv_path():
-    # return os_path.join(os_path.dirname(__file__), 'test_data', 'other.csv')
     return os_path.join(os_path.dirname(__file__), 'test_data', 'complex.csv')
 
 @pytest.fixture
 def approved_locates():
-    # return {
-    #     'AAPL': 1570,  # ~87% of 1800 requested
-    #     'GOOG': 800,   # 80% of 1000 requested
-    #     'MSFT': 400    # 80% of 500 requested
-    # }
-
-    # agrigation for complex.csv
     return {
         'AAPL': 2550, # 75% of 3400 requested
         'MSFT': 1740, # 60% of 2900 requested
@@ -31,10 +23,6 @@ def approved_locates():
 @pytest.fixture
 def expected_distribution():
     return {
-        # 'ClientA': {'AAPL': 900, 'GOOGL': 600},
-        # 'ClientB': {'AAPL': 422, 'MSFT': 300},
-        # 'ClientC': {'AAPL': 248, 'GOOG': 200},
-        # 'ClientD': {'MSFT': 100}
         'Alice': {'AAPL': 400},
         'Bob': {'MSFT': 220},
         'Charlie': {'GOOGL': 200},

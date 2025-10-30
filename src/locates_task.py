@@ -1,26 +1,29 @@
 import csv, os
 
+# Constants
+VALUE_OF_ITEM = 1
+CHUNK_SIZE = 100
+
 def valid_req(row: dict[str, str]) -> None | tuple[str,str,int]:
-    """Basic validation for a single row. 
-    return None on bad input.
-    Returns all the valid fields on success.
+    """Basic validation for a single row.
+    input: dictionary representing a CSV row - {client_name, symbol, number_of_locates_requested}.
+    returns: None on bad input.
+             all the valid fields on success - (client_name, symbol, number_of_locates_requested).
     """
     # read fields by header names
     try:
         client = row.get('client_name')
         symbol = row.get('symbol')
         num_of_locates_req = row.get('number_of_locates_requested')
-
         # missing header fields - there might be a fix but I rather to fix the csv file
         if client is None or symbol is None or num_of_locates_req is None:
             return None
         # empty strings
         if str(client).strip() == "" or str(symbol).strip() == "":
             return None
-        
         num_of_locates_req = int(num_of_locates_req)
         # invalid number of locates
-        if num_of_locates_req % 100 != 0 or num_of_locates_req <= 0:
+        if num_of_locates_req % CHUNK_SIZE != 0 or num_of_locates_req <= 0:
             return None
         
         return client, symbol, num_of_locates_req
@@ -29,7 +32,9 @@ def valid_req(row: dict[str, str]) -> None | tuple[str,str,int]:
 
 
 def csv_parser(file_path: str) -> tuple[dict[str, dict[str, int]], dict[str, int], dict[str, dict[str, float]]]:
-    """Parses the CSV file and returns:
+    """Parses the CSV file into data structures.
+    input: path to the CSV file.
+    returns: a tuple of three dictionaries:
     - a dictionary of clients requests: {client_name: {symbol: num_of_locates_requested}}
     - a dictionary of aggregate symbols requests: {symbol: total_num_of_locates_requested}
     - a dictionary of requested locates percentages by symbol: {symbol: {client_name: percentage_of_requests}}
@@ -47,11 +52,11 @@ def csv_parser(file_path: str) -> tuple[dict[str, dict[str, int]], dict[str, int
         with open(file_path, 'r', newline='') as csv_file:
             reader = csv.DictReader(csv_file, skipinitialspace=True)
 
+            # validate headers length
             if reader.fieldnames is None or len(reader.fieldnames) != 3:
                 raise Exception("the csv file is in the wrong format")
 
             for row in reader:
-                # validate and convert
                 result = valid_req(row)
                 if result is None:
                     # invalid row - skip
@@ -60,7 +65,7 @@ def csv_parser(file_path: str) -> tuple[dict[str, dict[str, int]], dict[str, int
 
                 # each-client requests
                 client_reqs = clients_requests.setdefault(client, {})
-                # each client, symbol appears once
+                # each client, symbol appears once so no need to check for existing symbol
                 client_reqs[symbol] = num_of_locates_req
 
                 # overall symbol aggregation
@@ -70,7 +75,7 @@ def csv_parser(file_path: str) -> tuple[dict[str, dict[str, int]], dict[str, int
                 symbol_clients = req_by_symbol_clients_percentage.setdefault(symbol, {})
                 symbol_clients[client] = num_of_locates_req
 
-            # convert per-symbol client requests to percentages (do not mutate while iterating)
+            # convert per-symbol client requests to percentages
             for symbol, client_requests in req_by_symbol_clients_percentage.items():
                 total_requested = aggregate_symbols[symbol]
                 # build a new dict of percentages
@@ -91,73 +96,84 @@ def csv_parser(file_path: str) -> tuple[dict[str, dict[str, int]], dict[str, int
 
     return clients_requests, aggregate_symbols, req_by_symbol_clients_percentage
 
+
 def distribute_locates(clients_requests: dict[str, dict[str, int]], approved_locates: dict[str, int],
                        req_by_symbol_clients_percentage: dict[str, dict[str, float]]) -> dict[str, dict[str, int]]:
     """Distributes the approved locates among clients requests proportionally.
-    returns a dictionary of distributed locates: {client_name: {symbol: num_of_locates_distributed}}"""
-    # client -> {symbol -> num}
+    input:
+    - clients_requests: {client_name: {symbol: num_of_locates_requested}}
+    - approved_locates: {symbol: num_of_locates_approved}
+    - req_by_symbol_clients_percentage: {symbol: {client_name: percentage_of_requests}}
+    returns a dictionary of distributed locates: {client_name: {symbol: num_of_locates_distributed}}
+    """
+    # client : {symbol : num}
     distributed_locates: dict[str, dict[str, int]] = {client: {} for client in clients_requests.keys()}
 
-    def rounding_100(curr, symbol) -> None | list[str, int]:  
-        # order by the min change in oreder to get to a multiple of 100
-        filtered_items = [list(item) for item in curr.items() if item[1] % 100 != 0]
-        sorted_and_filtered = sorted(filtered_items, key=lambda item: item[1] % 100, reverse=True)
-        total_to_distribute = 0
+    def rounding_chunks(distribute_by_proportion: dict[str, int]) -> None | list[str, int]:
+        """Rounds the distributed locates to the nearest chunk size (CHUNK_SIZE).
+        input: distribute_by_proportion - {client_name: num_of_locates_distributed}
+        returns a list of tuples (client_name, rounded_num_of_locates_distributed) or None if no rounding needed.
+        """
+        # order by the min change in oreder to get to a multiple of CHUNK_SIZE
+        filtered_items = [list(item) for item in distribute_by_proportion.items() if item[VALUE_OF_ITEM] % CHUNK_SIZE != 0]
+        sorted_and_filtered = sorted(filtered_items, key=lambda item: item[VALUE_OF_ITEM] % CHUNK_SIZE, reverse=True)
 
         # collecting all reminders to distribute
+        total_to_distribute = 0
         for i, (_, val) in enumerate(sorted_and_filtered):
-            reminder = val % 100
+            reminder = val % CHUNK_SIZE
             total_to_distribute += reminder
-            # sorted_and_filtered[i][1] = val - reminder
-        times = int(total_to_distribute / 100)
-        # if sum of reminders is less than 100 no need to distribute
+        times = int(total_to_distribute / CHUNK_SIZE)
+        # if sum of reminders is less than CHUNK_SIZE no need to distribute
         if not times:
             return None
         
         # figure how much we need of rounding the cloesest to it.
         grab_for_distribution = 0
         for i in range(times):
-            grab_for_distribution += 100 - (sorted_and_filtered[i][1] % 100)
+            grab_for_distribution += CHUNK_SIZE - (sorted_and_filtered[i][VALUE_OF_ITEM] % CHUNK_SIZE)
             # act like we rounded them already
-            sorted_and_filtered[i][1] += 100 - (sorted_and_filtered[i][1] % 100)
+            sorted_and_filtered[i][VALUE_OF_ITEM] += CHUNK_SIZE - (sorted_and_filtered[i][VALUE_OF_ITEM] % CHUNK_SIZE)
 
         emptied_clients = 0
         # grab from the lowest ones to distribute to the top ones
         while grab_for_distribution > 0:
             size_of_relevants = len(sorted_and_filtered) - (emptied_clients + times) # of clients that can give locates
-            to_take = int(grab_for_distribution / size_of_relevants) # how much to take from each client
+            chunk_to_redistribute = int(grab_for_distribution / size_of_relevants) # how much to take from each client
 
-            if not to_take:
+            # if we can't take a full chunk from each client - take 1 from the lowest ones
+            if not chunk_to_redistribute:
                 for i in range(grab_for_distribution):
                     index = size_of_relevants + times - 1 - (i % size_of_relevants)
-                    sorted_and_filtered[index][1] -= 1
+                    sorted_and_filtered[index][VALUE_OF_ITEM] -= 1
                 grab_for_distribution = 0
                 break
-
-            for i in range (size_of_relevants + times - 1, times - 1, -1): # from the lowest to the highest that gave locates
+            
+            # from the lowest to the highest that gave locates
+            for i in range (size_of_relevants + times - 1, times - 1, -1): 
                 # if we can take the full amount
-                if (sorted_and_filtered[i][1] % 100) - to_take >= 0:
-                    sorted_and_filtered[i][1] -= to_take
-                    grab_for_distribution -= to_take
+                if (sorted_and_filtered[i][VALUE_OF_ITEM] % CHUNK_SIZE) - chunk_to_redistribute >= 0:
+                    sorted_and_filtered[i][VALUE_OF_ITEM] -= chunk_to_redistribute
+                    grab_for_distribution -= chunk_to_redistribute
                     # if we emptied this client
-                    if sorted_and_filtered[i][1] % 100 == 0:
+                    if sorted_and_filtered[i][VALUE_OF_ITEM] % CHUNK_SIZE == 0:
                         emptied_clients += 1
                 # else if we can't take the full amount
                 else: 
-                    to_take = sorted_and_filtered[i][1] % 100
-                    sorted_and_filtered[i][1] -= to_take
+                    chunk_to_redistribute = sorted_and_filtered[i][VALUE_OF_ITEM] % CHUNK_SIZE
+                    sorted_and_filtered[i][VALUE_OF_ITEM] -= chunk_to_redistribute
                     emptied_clients += 1
-                    grab_for_distribution -= to_take
+                    grab_for_distribution -= chunk_to_redistribute
                     break
         return sorted_and_filtered
 
 
     def distribute_by_symbol() -> None:
         """Distributes approved locates by symbol among clients.
-        returns a dictionary of distributed locates by symbol."""
+        changes the distributed_locates dictionary in place."""
         # go over relevent symbols only
         for symbol, total in approved_locates.items():
-            curr = {}
+            distribute_by_proportion = {}
             rounding = False
             for client, proportion in req_by_symbol_clients_percentage[symbol].items():
                 # find portion by number
@@ -167,21 +183,20 @@ def distribute_locates(clients_requests: dict[str, dict[str, int]], approved_loc
                 converted = int(amount)
                 if amount - converted > 0.5:
                     amount = converted + 1
-                else: 
+                else:
                     amount = converted
-                
-                curr[client] = amount
+                distribute_by_proportion[client] = amount
 
                 # client can't get more then requested
                 max_allocate = min(amount, clients_requests[client][symbol])
                 distributed_locates[client][symbol] = max_allocate
 
-                # got by proportion 
+                # client got by proportion - check if rounding is needed
                 if max_allocate != clients_requests[client][symbol]:
                     rounding = True
-            # got by proportion - try to redistribute
+            # try to redistribute leftovers
             if rounding: 
-                distribute_list = rounding_100(curr, symbol)
+                distribute_list = rounding_chunks(distribute_by_proportion)
                 if distribute_list:
                     for client, value in distribute_list:
                         distributed_locates[client][symbol] = value
@@ -191,12 +206,37 @@ def distribute_locates(clients_requests: dict[str, dict[str, int]], approved_loc
     distribute_by_symbol()
     return distributed_locates
     
+def create_results_csv(distributed_locates: dict[str, dict[str, int]], output_path: str) -> None:
+    """Creates a CSV file with the distributed locates results.
+    input:
+    - distributed_locates: {client_name: {symbol: num_of_locates_distributed}}
+    - output_path: path to the output CSV file.
+    returns: None on success, raises Exception on failure.
+    """
+    try:
+        with open(output_path, 'w', newline='') as csv_file:
+            fieldnames = ['client_name', 'symbol', 'number_of_locates_allocated']
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+
+            writer.writeheader()
+            # write each client's distributed locates
+            for client, symbols_granted in distributed_locates.items():
+                for symbol, num_of_locates in symbols_granted.items():
+                    writer.writerow({
+                        'client_name': client,
+                        'symbol': f" {symbol}",
+                        'number_of_locates_allocated': f" {num_of_locates}"
+                    })
+    except Exception as e:
+        raise Exception(f"Failed to write results CSV: {e}")
 
 
 def request_locates(requested_locates: dict[str, int]) -> dict[str, int]:
     """A black box function that approves locates
     according to some internal logic.
     This is just a way for me to simulate locate approvals instead of the API call.
+    input: requested_locates - {symbol: num_of_locates_requested}
+    returns: approved_locates - {symbol: num_of_locates_approved}
     """
     from random import random, uniform
     approved_locates = {}
@@ -212,19 +252,19 @@ def request_locates(requested_locates: dict[str, int]) -> dict[str, int]:
     return approved_locates
 
 if __name__ == '__main__':
-    # csv_path = r'.\csvs\basic_example.csv'
     csv_path = r'.\tests\test_data\complex.csv'
     clients_requests, aggregate_symbols, req_by_symbol_clients_percentage = csv_parser(csv_path)
     # simulate API call
-    # approved = request_locates(aggregate_symbols)
-    approved ={
-        'AAPL': 2550, # 75% of 3400 requested
-        'MSFT': 1740, # 60% of 2900 requested
-        'GOOGL': 2660, # 95% of 2800 requested
-        'AMZN': 2190, # 73% of 3000 requested
-        'TSLA': 864, # 27% of 3200 requested
-    }
+    approved = request_locates(aggregate_symbols)
+    # approved ={
+    #     'AAPL': 2550, # 75% of 3400 requested
+    #     'MSFT': 1740, # 60% of 2900 requested
+    #     'GOOGL': 2660, # 95% of 2800 requested
+    #     'AMZN': 2190, # 73% of 3000 requested
+    #     'TSLA': 864, # 27% of 3200 requested
+    # }
     # compute distribution
     distributed = distribute_locates(clients_requests, approved, req_by_symbol_clients_percentage)
-    print("Final distribution:")
-    print(distributed)
+    # write results
+    output_csv_path = r'.\results.csv'
+    create_results_csv(distributed, output_csv_path)

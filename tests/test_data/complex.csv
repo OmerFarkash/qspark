@@ -1,5 +1,6 @@
 client_name, symbol, number_of_locates_requested
 Alice, AAPL, 500
+Alice, GOOGL, 300
 Bob, MSFT, 400
 Charlie, GOOGL, 200
 Dave, AMZN, 300

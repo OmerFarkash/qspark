@@ -82,3 +82,28 @@ from locates_task import distribute_locates
 def test_distribute_locates(clients_requests, approved_locates, req_by_symbol_clients_percentage, expected_distribution):
     distribution = distribute_locates(clients_requests, approved_locates, req_by_symbol_clients_percentage)
     assert distribution == expected_distribution
+
+@pytest.mark.parametrize(
+    "clients_requests, approved_locates, req_by_symbol_clients_percentage, expected_distribution", [
+        # Edge case: approved locates exceed requests
+        (
+            {
+                'Client1': {'ABC': 200},
+                'Client2': {'ABC': 300}
+            },
+            {
+                'ABC': 600  # exceeds total requested of 500
+            },
+            {
+                'ABC': {'Client1': 0.4, 'Client2': 0.6}
+            },
+            {
+                'Client1': {'ABC': 200},
+                'Client2': {'ABC': 300}
+            }
+        )
+    ]
+)
+def test_distribute_locates_exceeding_approved(clients_requests, approved_locates, req_by_symbol_clients_percentage, expected_distribution):
+    distribution = distribute_locates(clients_requests, approved_locates, req_by_symbol_clients_percentage)
+    assert distribution == expected_distribution
