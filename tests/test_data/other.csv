@@ -1,0 +1,8 @@
+client_name,symbol,number_of_locates_requested
+ClientA,AAPL,1000
+ClientB,AAPL,500
+ClientC,AAPL,300
+ClientA,GOOG,800
+ClientC,GOOG,200
+ClientB,MSFT,400
+ClientD,MSFT,100

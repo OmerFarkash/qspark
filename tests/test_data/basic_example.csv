@@ -1,0 +1,5 @@
+client_name, symbol, number_of_locates_requested
+Client1, ABC, 300
+Client2, QQQ, 100
+Client2, ABC, 200
+Client3, TTT, 100
