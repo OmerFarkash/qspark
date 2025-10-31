@@ -1,0 +1,41 @@
+Some additional notes about my code and edge cases.
+
+some more testing in my repo: https://github.com/OmerFarkash/qspark
+
+unhandeled edge cases:
+    1. When the csv file has no header line - data only: this will cause an error.
+       My solution if needed would be to add a top line for the csv so we can control the header.
+    2. When the csv haders using another header line then the original example: 
+       client_name,symbol,number_of_locates_allocated
+       even a simple '' would make it crash.
+       This issue can resulve in the same way as the first one.
+    I am addressing some other csv issues in my code, but with proper inputs in genaral it should be fine.
+
+The most important function - distribute_locates:
+    The algorithm goes in a few phases:
+    1. Go over symbols and distribute all the approve amount of locates
+       according to the proportion of the client's origival requeste.
+       Making sure we use all the amount.
+       As for the edge case of aprroved goes beyond the aggrigated requeste then don't give more then requested.
+
+    2. If we got only a part of the aggrigated requeste for that symbol - we need to redistribute.
+       2.1 Figure how much new chunks of 100 locates we can create. 
+       - Using filter then order the list - O(n log(n))
+         The better way but more complex to do:
+         I could find the max value and the perform Radix Sort on the range [0, max] 
+         so it would be O(d(n+b)), where d is the number of digits and b is the base of the numbers, so O(n).
+
+       2.2 Now round the amount locates to the next 100 for the cloesest client to it.
+           The fairness here is to keep the distribution among all clients (for that symbol) 
+           as close as possible to the original proportion.
+    3. Now we take the same amount from each "donor" - if someone don't have enough then take as much there is and roll the rest among the rest.
+       This part works at O(n) becuse each client can get \ taken from only twice so it's linear time.
+
+    In conclution this works with complexity of O(n log (n)) but I can get it down to O(n).
+    My fairness formula is:
+    1. Distribute all 100 chunks as close as possible to their requestes.
+    2. Leftovers are distributed such that ths sum over all abs(actual portion - locates get) 
+       (the distance between what you portion you deserve and what you are getting is minimal).
+ 
+
+thanks for the opertunity, omer.
