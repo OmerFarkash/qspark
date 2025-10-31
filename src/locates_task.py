@@ -256,6 +256,7 @@ if __name__ == '__main__':
     clients_requests, aggregate_symbols, req_by_symbol_clients_percentage = csv_parser(csv_path)
     # simulate API call
     approved = request_locates(aggregate_symbols)
+
     # approved ={
     #     'AAPL': 2550, # 75% of 3400 requested
     #     'MSFT': 1740, # 60% of 2900 requested
@@ -263,8 +264,10 @@ if __name__ == '__main__':
     #     'AMZN': 2190, # 73% of 3000 requested
     #     'TSLA': 864, # 27% of 3200 requested
     # }
+
     # compute distribution
     distributed = distribute_locates(clients_requests, approved, req_by_symbol_clients_percentage)
-    # write results
+    
+    # write results to CSV
     output_csv_path = r'.\results.csv'
     create_results_csv(distributed, output_csv_path)

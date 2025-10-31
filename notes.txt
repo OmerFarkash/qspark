@@ -2,6 +2,8 @@ Some additional notes about my code and edge cases.
 
 some more testing in my repo: https://github.com/OmerFarkash/qspark
 
+The program runs from the main function, just insert full path to the csv file.
+
 unhandeled edge cases:
     1. When the csv file has no header line - data only: this will cause an error.
        My solution if needed would be to add a top line for the csv so we can control the header.
