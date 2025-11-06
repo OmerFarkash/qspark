@@ -2,31 +2,37 @@ import csv, os
 
 # Constants
 VALUE_OF_ITEM = 1
-CHUNK_SIZE = 100
 
-def valid_req(row: dict[str, str]) -> None | tuple[str,str,int]:
+def valid_req(row: dict[str, str]) -> None | tuple[str,str,int,int]:
     """Basic validation for a single row.
-    input: dictionary representing a CSV row - {client_name, symbol, number_of_locates_requested}.
+    input: dictionary representing a CSV row - {client_name, symbol, number_of_locates_requested, round_lot_size}.
     returns: None on bad input.
-             all the valid fields on success - (client_name, symbol, number_of_locates_requested).
+             all the valid fields on success - (client_name, symbol, number_of_locates_requested, round_lot_size).
     """
     # read fields by header names
     try:
         client = row.get('client_name')
         symbol = row.get('symbol')
         num_of_locates_req = row.get('number_of_locates_requested')
+        round_size = row.get("round_lot_size")
         # missing header fields - there might be a fix but I rather to fix the csv file
-        if client is None or symbol is None or num_of_locates_req is None:
+        if client is None or symbol is None or num_of_locates_req is None or round_size is None:
             return None
         # empty strings
         if str(client).strip() == "" or str(symbol).strip() == "":
             return None
+        
+        # invalid number of rounding
+        round_size = int(round_size)
+        if round_size <= 0:
+            return None
+
         num_of_locates_req = int(num_of_locates_req)
         # invalid number of locates
-        if num_of_locates_req % CHUNK_SIZE != 0 or num_of_locates_req <= 0:
+        if num_of_locates_req % round_size != 0 or num_of_locates_req <= 0:
             return None
         
-        return client, symbol, num_of_locates_req
+        return client, symbol, num_of_locates_req, round_size
     except Exception as e:
         return None
 
@@ -38,10 +44,12 @@ def csv_parser(file_path: str) -> tuple[dict[str, dict[str, int]], dict[str, int
     - a dictionary of clients requests: {client_name: {symbol: num_of_locates_requested}}
     - a dictionary of aggregate symbols requests: {symbol: total_num_of_locates_requested}
     - a dictionary of requested locates percentages by symbol: {symbol: {client_name: percentage_of_requests}}
+    - a dictionary of chunk sizes by symbol: {symbol: round_size}
     """
     clients_requests: dict[str, dict[str, int]] = {}
     aggregate_symbols: dict[str, int] = {}
     req_by_symbol_clients_percentage: dict[str, dict[str, float]] = {}
+    chunk_pr_symbol: dict[str, int] = {}
     try:
         _, extension = os.path.splitext(file_path)
 
@@ -53,7 +61,7 @@ def csv_parser(file_path: str) -> tuple[dict[str, dict[str, int]], dict[str, int
             reader = csv.DictReader(csv_file, skipinitialspace=True)
 
             # validate headers length
-            if reader.fieldnames is None or len(reader.fieldnames) != 3:
+            if reader.fieldnames is None or len(reader.fieldnames) != 4:
                 raise Exception("the csv file is in the wrong format")
 
             for row in reader:
@@ -61,7 +69,12 @@ def csv_parser(file_path: str) -> tuple[dict[str, dict[str, int]], dict[str, int
                 if result is None:
                     # invalid row - skip
                     continue
-                client, symbol, num_of_locates_req = result
+                client, symbol, num_of_locates_req, round_size = result
+
+                # track chunk sizes - only the first one matters
+                existing_round_size = chunk_pr_symbol.get(symbol)
+                if existing_round_size is None:
+                    chunk_pr_symbol[symbol] = round_size
 
                 # each-client requests
                 client_reqs = clients_requests.setdefault(client, {})
@@ -94,46 +107,47 @@ def csv_parser(file_path: str) -> tuple[dict[str, dict[str, int]], dict[str, int
         else:
             raise Exception(f"Error: {e}")
 
-    return clients_requests, aggregate_symbols, req_by_symbol_clients_percentage
+    return clients_requests, aggregate_symbols, req_by_symbol_clients_percentage, chunk_pr_symbol
 
 
 def distribute_locates(clients_requests: dict[str, dict[str, int]], approved_locates: dict[str, int],
-                       req_by_symbol_clients_percentage: dict[str, dict[str, float]]) -> dict[str, dict[str, int]]:
+                       req_by_symbol_clients_percentage: dict[str, dict[str, float]], chunk_pr_symbol: dict[str, int]) -> dict[str, dict[str, int]]:
     """Distributes the approved locates among clients requests proportionally.
     input:
     - clients_requests: {client_name: {symbol: num_of_locates_requested}}
     - approved_locates: {symbol: num_of_locates_approved}
     - req_by_symbol_clients_percentage: {symbol: {client_name: percentage_of_requests}}
+    - chunk_pr_symbol: {symbol: round_lot_size}
     returns a dictionary of distributed locates: {client_name: {symbol: num_of_locates_distributed}}
     """
     # client : {symbol : num}
     distributed_locates: dict[str, dict[str, int]] = {client: {} for client in clients_requests.keys()}
 
-    def rounding_chunks(distribute_by_proportion: dict[str, int]) -> None | list[str, int]:
-        """Rounds the distributed locates to the nearest chunk size (CHUNK_SIZE).
+    def rounding_chunks(distribute_by_proportion: dict[str, int], round_lot_size: int) -> None | list[str, int]:
+        """Rounds the distributed locates to the nearest chunk size (round_lot_size).
         input: distribute_by_proportion - {client_name: num_of_locates_distributed}
         returns a list of tuples (client_name, rounded_num_of_locates_distributed) or None if no rounding needed.
         """
-        # order by the min change in oreder to get to a multiple of CHUNK_SIZE
-        filtered_items = [list(item) for item in distribute_by_proportion.items() if item[VALUE_OF_ITEM] % CHUNK_SIZE != 0]
-        sorted_and_filtered = sorted(filtered_items, key=lambda item: item[VALUE_OF_ITEM] % CHUNK_SIZE, reverse=True)
+        # order by the min change in oreder to get to a multiple of round_lot_size
+        filtered_items = [list(item) for item in distribute_by_proportion.items() if item[VALUE_OF_ITEM] % round_lot_size != 0]
+        sorted_and_filtered = sorted(filtered_items, key=lambda item: item[VALUE_OF_ITEM] % round_lot_size, reverse=True)
 
         # collecting all reminders to distribute
         total_to_distribute = 0
         for i, (_, val) in enumerate(sorted_and_filtered):
-            reminder = val % CHUNK_SIZE
+            reminder = val % round_lot_size
             total_to_distribute += reminder
-        times = int(total_to_distribute / CHUNK_SIZE)
-        # if sum of reminders is less than CHUNK_SIZE no need to distribute
+        times = int(total_to_distribute / round_lot_size)
+        # if sum of reminders is less than round_lot_size no need to distribute
         if not times:
             return None
         
         # figure how much we need of rounding the cloesest to it.
         grab_for_distribution = 0
         for i in range(times):
-            grab_for_distribution += CHUNK_SIZE - (sorted_and_filtered[i][VALUE_OF_ITEM] % CHUNK_SIZE)
+            grab_for_distribution += round_lot_size - (sorted_and_filtered[i][VALUE_OF_ITEM] % round_lot_size)
             # act like we rounded them already
-            sorted_and_filtered[i][VALUE_OF_ITEM] += CHUNK_SIZE - (sorted_and_filtered[i][VALUE_OF_ITEM] % CHUNK_SIZE)
+            sorted_and_filtered[i][VALUE_OF_ITEM] += round_lot_size - (sorted_and_filtered[i][VALUE_OF_ITEM] % round_lot_size)
 
         emptied_clients = 0
         # grab from the lowest ones to distribute to the top ones
@@ -152,15 +166,15 @@ def distribute_locates(clients_requests: dict[str, dict[str, int]], approved_loc
             # from the lowest to the highest that gave locates
             for i in range (size_of_relevants + times - 1, times - 1, -1): 
                 # if we can take the full amount
-                if (sorted_and_filtered[i][VALUE_OF_ITEM] % CHUNK_SIZE) - chunk_to_redistribute >= 0:
+                if (sorted_and_filtered[i][VALUE_OF_ITEM] % round_lot_size) - chunk_to_redistribute >= 0:
                     sorted_and_filtered[i][VALUE_OF_ITEM] -= chunk_to_redistribute
                     grab_for_distribution -= chunk_to_redistribute
                     # if we emptied this client
-                    if sorted_and_filtered[i][VALUE_OF_ITEM] % CHUNK_SIZE == 0:
+                    if sorted_and_filtered[i][VALUE_OF_ITEM] % round_lot_size == 0:
                         emptied_clients += 1
                 # else if we can't take the full amount
                 else: 
-                    chunk_to_redistribute = sorted_and_filtered[i][VALUE_OF_ITEM] % CHUNK_SIZE
+                    chunk_to_redistribute = sorted_and_filtered[i][VALUE_OF_ITEM] % round_lot_size
                     sorted_and_filtered[i][VALUE_OF_ITEM] -= chunk_to_redistribute
                     emptied_clients += 1
                     grab_for_distribution -= chunk_to_redistribute
@@ -196,7 +210,7 @@ def distribute_locates(clients_requests: dict[str, dict[str, int]], approved_loc
                     rounding = True
             # try to redistribute leftovers
             if rounding: 
-                distribute_list = rounding_chunks(distribute_by_proportion)
+                distribute_list = rounding_chunks(distribute_by_proportion, chunk_pr_symbol[symbol])
                 if distribute_list:
                     for client, value in distribute_list:
                         distributed_locates[client][symbol] = value
@@ -253,7 +267,7 @@ def request_locates(requested_locates: dict[str, int]) -> dict[str, int]:
 
 if __name__ == '__main__':
     csv_path = r'.\tests\test_data\complex.csv'
-    clients_requests, aggregate_symbols, req_by_symbol_clients_percentage = csv_parser(csv_path)
+    clients_requests, aggregate_symbols, req_by_symbol_clients_percentage, chunk_pr_symbol = csv_parser(csv_path)
     # simulate API call
     approved = request_locates(aggregate_symbols)
 
@@ -266,7 +280,7 @@ if __name__ == '__main__':
     # }
 
     # compute distribution
-    distributed = distribute_locates(clients_requests, approved, req_by_symbol_clients_percentage)
+    distributed = distribute_locates(clients_requests, approved, req_by_symbol_clients_percentage, chunk_pr_symbol)
     
     # write results to CSV
     output_csv_path = r'.\results.csv'
